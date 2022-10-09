@@ -13,22 +13,22 @@ var (
 	errNegativeMessage = errors.New("message cannot be less than zero")
 )
 
+// PublicKey represents a Paillier public (encryption) key.
 type PublicKey struct {
 	N *big.Int
 	g *big.Int // this is just n+1, do we need it?
 }
 
+// PrivateKey represents a Paillier secret (decryption) key.
 type PrivateKey struct {
+	*PublicKey
 	lm *big.Int
 	mu *big.Int
 }
 
-type Keypair struct {
-	*PrivateKey
-	*PublicKey
-}
-
-func GenerateKeypair(bits int) (*Keypair, error) {
+// GeneratePrivateKey generates a new PrivateKey with an embedded PublicKey.
+// The `bits` parameter corresponds to the size of n^2.
+func GeneratePrivateKey(bits int) (*PrivateKey, error) {
 	p, err := rand.Prime(rand.Reader, bits/2)
 	if err != nil {
 		return nil, err
@@ -48,22 +48,24 @@ func GenerateKeypair(bits int) (*Keypair, error) {
 
 	mu := (&big.Int{}).ModInverse(lm, n)
 
-	return &Keypair{
-		PublicKey: &PublicKey{
-			N: n,
-			g: g,
-		},
-		PrivateKey: &PrivateKey{
-			lm: lm,
-			mu: mu,
-		},
+	pk := &PublicKey{
+		N: n,
+		g: g,
+	}
+
+	return &PrivateKey{
+		PublicKey: pk,
+		lm:        lm,
+		mu:        mu,
 	}, nil
 }
 
+// Ciphertext represents a Paillier ciphertext.
 type Ciphertext struct {
 	c *big.Int
 }
 
+// Encrypt encrypts the plaintext message with the given public key.
 func (pk *PublicKey) Encrypt(m *big.Int) (*Ciphertext, error) {
 	// require 0 <= m < n
 	if m.Cmp(pk.N) > 0 {
@@ -89,4 +91,23 @@ func (pk *PublicKey) Encrypt(m *big.Int) (*Ciphertext, error) {
 	return &Ciphertext{
 		c: c,
 	}, nil
+}
+
+// Decrypt returns the plaintext decrypted from the ciphertext using the
+// given secret key.
+func (sk *PrivateKey) Decrypt(c *Ciphertext) *big.Int {
+	n2 := (&big.Int{}).Mul(sk.N, sk.N)
+
+	// c^lambda mod n^2
+	clm := (&big.Int{}).Exp(c.c, sk.lm, n2)
+
+	// L(c^lambda mod n^2)
+	// where L(x) = (x-1)/n
+	l := (&big.Int{}).Sub(clm, one)
+	l = (&big.Int{}).Div(l, sk.N)
+
+	// L(c^lambda mod n^2) * mu mod n
+	m := (&big.Int{}).Mul(l, sk.mu)
+	m = (&big.Int{}).Mod(m, sk.N)
+	return m
 }
